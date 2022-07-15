@@ -1,0 +1,916 @@
+# Univariate Logistic Regression
+```
+  This function runs Univariate Logistic Regression on the target (disease) and the independent variable (the robust feature).
+  
+  Args:
+    filename: Name of the csv file with the target (in binary) and the independent variables (continuous or categorical). 
+    dep: Name of the target (mood disorder)
+    indep: Name of the independent variable
+  Returns:
+    The regression model after Univariate Logistic Regression (with Odds Ratio, Confidence level, and Adjusted p-values), saved as csv file with name format "Logit[feature]uni.csv" in the 'UnivariateLogisticRegression" folder.
+    
+```
+
+```{r, results='hide', include = FALSE}
+univariate_lr <- function(filename, dep, indep) {
+  options(scipen=999)
+  setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+  f_path = paste(getwd(), '/UnivariateLogisticRegression',sep="")  #Change directory name if needed
+  if (!dir.exists(f_path)) {
+    dir.create(f_path)
+  }
+  f = filename
+  
+  data <- read.csv(file =f)
+  data = data[,names(data) %in% c(indep, dep)]
+  
+  y <- as.formula(paste(dep,' ~ ', indep))
+  
+  res = glm(y,data=data,family=binomial())
+  trm <- attr(res$terms, "term.labels")
+  df <- data.frame(Variable_Name=character(), Odds_Ratio=numeric(), Conf_25=numeric(), Conf_75=numeric(), P_Value=numeric())
+  for (i in seq(2,dim(summary(res)$coef)[1],by=1)) {
+    res_vec <- tryCatch(c(trm[i-1], exp(summary(res)$coef[i,][1]), exp(confint(res)[i,]), summary(res)$coef[i,][4]), error=function(e) c(NA,NA,NA,NA,NA))
+    df[nrow(df) + 1,] = res_vec
+  }
+  adjusted <- p.adjust(df[, c('P_Value')], method="BH")
+  df$Adjusted_P = adjusted
+  df <- df[order(df$P_Value),]
+  write.csv(df,file = paste(f_path,'/Logit',indep,'.csv',sep="")) #Change file name if needed
+}
+
+filename = 'BDI_F_SMOTE.csv'
+dep = 'BDI_F'
+features = read.csv("RobustFeatures.csv")$feature
+for (indep in features) {
+  univariate_lr(filename,dep,indep)
+}
+
+
+```
+
+# Multivariate Logistic Regression
+```
+This function runs Multivariate Logistic Regression on the target (disease) and the independent variables (the robust features), with an option of creating a stepwise model or not.
+  
+  Args:
+    f_name: Filename containing the items of interest
+    dep: Name of the target (mood disorder)
+    stepwise: If TRUE, conduct stepwise ajdustment with AIC. Otherwise (FALSE), the function won't.
+  Returns:
+    The regression model after Multivariate Logistic Regression (with Odds Ratio, Confidence level, and Adjusted p-values). The model before stepwise is named "FullLogit[filename].csv", after stepwise is named "AICLogit[filename.csv]".
+```
+
+```{r, results='hide', include = FALSE, warning = FALSE}
+library(dplyr)
+library(tibble)
+library(RcmdrMisc)
+library(MASS)
+library(rcompanion)
+
+multivariate_logistic_regression <- function(f_name, dep, stepwise, IC) {
+  data2 <- data.frame(read.csv(f_name))
+  data2 = data2[,!names(data2) %in% c("X")]
+  path = paste(getwd(), '/MultivariateLogisticRegression',sep="") #Change directory name if needed
+  if (!dir.exists(path)) {
+    dir.create(path)
+  }
+  
+  y <- as.formula(paste(dep,' ~ .'))
+  
+  full.model = multivariate_lr(y, data2)
+  write.csv(full.model, file=paste(path,"/FullLogit",f_name,sep="")) #Change file name if needed
+  
+  if (stepwise) {
+    step.model = bicaictop(y, data2,IC)
+    write.csv(step.model, file=paste(path,"/",IC,"Logit_",f_name,sep=""))
+  }
+}
+
+#Helper function #1: Conducts Multivariate Logistic Regression
+multivariate_lr <- function(y, data) {
+  data2 <<- data
+  options(scipen=999)
+  df <- tibble(Variable_Name=character(), Odds_Ratio=numeric(), Conf_25=numeric(), Conf_75=numeric(), P_Value=numeric())
+  
+  multi = glm(y, data=data2, family=binomial())
+  trm <- attr(multi$terms, "term.labels")
+
+  for (i in seq(2,dim(summary(multi)$coef)[1],by=1)){
+  
+    if (is.na(multi$coefficients[i])) {
+      df <- df %>% add_row(Variable_Name = trm[i-1], 
+                           Odds_Ratio = NA, 
+                           Conf_25 = NA, 
+                           Conf_75 = NA,
+                           P_Value = NA)
+    } else {
+      a <- tryCatch(exp(confint(multi, trm[i-1])), error=function(e) c(NA,NA))
+      b <- tryCatch(exp(summary(multi)$coef[i,][1]), error=function(e) c(NA))
+      c <- tryCatch(summary(multi)$coef[i,][4], error=function(e) c(NA))
+      df <- df %>% add_row(Variable_Name = trm[i-1], 
+                           Odds_Ratio = b, 
+                           Conf_25 = a[1],  
+                           Conf_75 = a[2],
+                           P_Value = c)
+    }
+  }
+  adjusted2 <- p.adjust(as.numeric(unlist(df %>% dplyr::select(P_Value))), method="BH")
+  df <- df %>% add_column(Adjusted_P = adjusted2)
+  df <- df %>% arrange(P_Value)
+  df
+}
+
+#Helper function #2: Conducts stepwise Multivariate Logistic Regression
+bicaictop <- function(y, data, IC){
+  data2 <<- data
+  options(scipen=999)
+  df <- tibble(Variable_Name=character(), Odds_Ratio=numeric(), Conf_25=numeric(), Conf_75=numeric(), P_Value=numeric())
+  
+  first.glm = glm(y, data = data2, family = 'binomial')
+  res = stepwise(first.glm, trace = F, direction = "forward/backward", criterion = IC)
+  trm <- attr(res$terms, "term.labels")
+  
+  for (i in seq(2,dim(summary(res)$coef)[1],by=1)){
+
+    if (is.na(res$coefficients[i])) {
+      df <- df %>% add_row(Variable_Name = trm[i-1], 
+                           Odds_Ratio = NA, 
+                           Conf_25 = NA, 
+                           Conf_75 = NA,
+                           P_Value = NA)
+    } else {
+      a <- tryCatch(exp(confint(res, trm[i-1])), error=function(e) c(NA,NA))
+      b <- tryCatch(exp(summary(res)$coef[i,][1]), error=function(e) c(NA))
+      c <- tryCatch(summary(res)$coef[i,][4], error=function(e) c(NA))
+      df <- df %>% add_row(Variable_Name = trm[i-1], 
+                           Odds_Ratio = b, 
+                           Conf_25 = a[1],  
+                           Conf_75 = a[2],
+                           P_Value = c)
+    }
+  }
+
+  adjusted2 <- p.adjust(as.numeric(unlist(df %>% dplyr::select(P_Value))), method="BH")
+  df <- df %>% add_column(Adjusted_P = adjusted2)
+  df <- df %>% arrange(P_Value)
+  df
+}
+
+dep="BDI_F"
+f_names = c("BDI_F_SMOTE_top10.csv","BDI_F_SMOTE_top20.csv")
+for (f_name in f_names) {
+  multivariate_logistic_regression(f_name, dep, TRUE, "AIC")
+}
+```
+
+# Multivariate Linear Regression
+This function runs Multivariate Logistic Regression on the target (disease) and the independent variables (the robust features), with an option of creating a stepwise model or not.
+  
+  Args:
+    f_name: Name of csv file containing the items of interest
+    path: Name of path to which the data will be saved
+    dep: Name of the dependent variable (mood disorder)
+    stepwise: if TRUE, conduct stepwise ajdustment with AIC. Otherwise (FALSE), the function won't.
+  Returns:
+    The regression model after Multivariate Logistic Regression (with Odds Ratio, Confidence level, and Adjusted p-values). The model before stepwise is named "FullLogit[filename].csv", after stepwise is named "AICLogit[filename.csv]".
+    
+```{r}
+library(dplyr)
+library(MASS)
+library(tibble)
+library(car)
+library(broom)
+
+multivariate_linear_regression <- function(f_name, dep, stepwise) {
+  data2 <- data.frame(read.csv(f_name))
+  data2 = data2[,!names(data2) %in% c("X")]
+  
+  path = paste(getwd(), '/MultivariateLinearRegression',sep="") #Change directory name if needed
+  if (!dir.exists(path)) {
+    dir.create(path)
+  }
+  
+  y <- as.formula(paste(dep,' ~ .'))
+  
+  full.model  = lm(y, data2)
+  
+  #Checking assumptions for Regressions
+  sink(file =  paste(path,'/', f_name, "MultivariateRegression.txt", sep =""))
+  print('Multicollinearity \n')
+  #print(vif(full.model))
+  print('Durbin Watson Test \n')
+  print(durbinWatsonTest(full.model))
+  print('Shapiro Test \n')
+  print(shapiro.test(full.model$residuals))
+  sink()
+  
+  pdf(file =  paste(path,'/', f_name, "MultivariateRegression.pdf", sep =""),onefile=TRUE)
+  print('Linearity and Homoscedasticity \n')
+  print(plot(full.model, which = 1))
+  print('Outliers \n')
+  print(plot(full.model, which = 4))
+  print('Histogram & QQplot for normality \n')
+  print(hist(full.model$residuals, freq=FALSE, xlab = "Residuals", main="",cex.axis=1.5,cex.lab=1.5))
+  print(curve(dnorm(x,mean(full.model$residuals), sd(full.model$residuals)), -1.6, 2.1, add=TRUE,col=c('red')))
+  print(qqnorm(full.model$residuals, main=""))
+  print(qqline(full.model$residuals))
+  dev.off()
+  
+  full.model = multivariate_lm(y, data2)
+  write.csv(full.model, file=paste(path,"/FullLinear_",f_name,sep=""))
+  
+  if (stepwise) {
+    step.model = multivariate_aic_lm(y, data2)
+    write.csv(step.model, file=paste(path,"/AICLinear_",f_name,sep=""))
+  }
+}
+#Helper function #1: Conducts Multivariate Linear Regression
+multivariate_lm <- function(y, data) {
+  data2 <<- data
+  full.model <- lm(y, data = data2)
+  df <- tibble(Variable_Name=character(), Estimate=numeric(), Conf_25=numeric(), Conf_75=numeric(), P_Value=numeric())
+  trm <- attr(full.model$terms, "term.labels")
+  for (i in seq(2,dim(summary(full.model)$coef)[1],by=1)){
+    if (is.na(full.model$coefficients[i])) {
+      df <- df %>% add_row(Variable_Name = trm[i-1], 
+                          Estimate = NA, 
+                          Conf_25 = NA, 
+                          Conf_75 = NA,
+                          P_Value = NA)
+    } else {
+      a <- tryCatch(confint(full.model, trm[i-1]), error=function(e) c(NA,NA))
+      b <- tryCatch(summary(full.model)$coef[i,][1], error=function(e) c(NA))
+      c <- tryCatch(summary(full.model)$coef[i,][4], error=function(e) c(NA))
+      df <- df %>% add_row(Variable_Name = trm[i-1], 
+                           Estimate = b, 
+                           Conf_25 = a[1],  
+                           Conf_75 = a[2],
+                           P_Value = c)
+    }
+  }
+  adjusted2 <- p.adjust(as.numeric(unlist(df %>% dplyr::select(P_Value))), method="BH")
+  df <- df %>% add_column(Adjusted_P = adjusted2)
+  df <- df %>% arrange(P_Value)
+  df
+}
+#Helper function #2: Conducts stepwise Multivariate Linear Regression
+multivariate_aic_lm <- function(y, data) {
+  data2 <<- data
+  full.model <- lm(y, data = data2) 
+  step.model <- stepAIC(full.model, direction = "both", trace = FALSE) 
+  df <- tibble(Variable_Name=character(), Estimate=numeric(), Conf_25=numeric(), Conf_75=numeric(), P_Value=numeric())
+  trm <- attr(step.model$terms, "term.labels")
+  for (i in seq(2,dim(summary(step.model)$coef)[1],by=1)){
+    if (is.na(step.model$coefficients[i])) {
+      df <- df %>% add_row(Variable_Name = trm[i-1], 
+                          Odds_Ratio = NA, 
+                          Conf_25 = NA, 
+                          Conf_75 = NA,
+                          P_Value = NA)
+    } else {
+      a <- tryCatch(confint(step.model, trm[i-1]), error=function(e) c(NA,NA))
+      b <- tryCatch(summary(step.model)$coef[i,][1], error=function(e) c(NA))
+      c <- tryCatch(summary(step.model)$coef[i,][4], error=function(e) c(NA))
+      df <- df %>% add_row(Variable_Name = trm[i-1], 
+                           Estimate = b, 
+                           Conf_25 = a[1],  
+                           Conf_75 = a[2],
+                           P_Value = c)
+    }
+  }
+  adjusted2 <- p.adjust(as.numeric(unlist(df %>% dplyr::select(P_Value))), method="BH")
+  df <- df %>% add_column(Adjusted_P = adjusted2)
+  df <- df %>% arrange(P_Value)
+  df
+}
+
+```
+
+
+# Mediation Analysis -- Linear Regression
+```
+Do Mediation Analysis between the passed dependent & indepent variables and confounders
+and the mediation variable(s) passed in the passed data frame. 
+
+Args:
+    f_name: Pathname to csv file containing the items of interestdata: DataFrame containing the items of interest
+    dep: The dependent varaible in the analysis
+    med: The mediation variable(s) in the analysis -- can be a list
+    indep: The independent variables in the analysis -- can be a list
+    alpha: Minimum p value for the mediation to be significant
+    confound: whether to conduct mediation analysis with or without confounders
+Returns:
+    A dictionary mapping each of the independent variables to a dataframe of the mediation analysis
+```
+
+```{r, results='hide', warning= F, include = FALSE}
+library(mediation)
+
+mediation_analysis <- function(f_name, dep, med, alpha, confound) {
+  path = paste(getwd(), '/MediationAnalysis',sep="")
+  dir.create(path)
+  
+  data2 <- read.csv(f_name)
+  data2 <- data2[,!names(data2) %in% c("X")]
+  data2 = data2[,(which(colSums(data2) != 0))]
+  data2 = data2[, (which(colSums(data2) != nrow(data2)))] 
+  p_cutoff <- alpha
+  outcome <- dep
+  mediator <- med
+  
+  if (confound) {
+    ma_with_confounders(data2, outcome, mediator, p_cutoff)
+  } else {
+    ma_without_confounders(data2, outcome, mediator, p_cutoff)
+  }
+}
+
+#Helper function #1: Conducts Mediation Analysis with confounders
+ma_with_confounders <- function(data, outcome, mediator, p_cutoff) {
+  data2 <<- data
+  columns = colnames(data2)
+  columns = columns[!columns %in% c(outcome,mediator,"AGE","GENDER","SOCIOSTATUS_1.0","SOCIOSTATUS_2.0","SOCIOSTATUS_3.0")]
+  
+  for (col in columns){
+    f1 <<- as.formula(paste(mediator,"~",col,"+AGE+GENDER+SOCIOSTATUS_1.0+SOCIOSTATUS_2.0+SOCIOSTATUS_3.0", sep =""))
+    model.M = lm(f1, data = data2)
+  
+    if (summary(model.M)$coef[,4][2]<=p_cutoff){
+    f2 <<- as.formula(paste(outcome, "~", col,"+",mediator,"+AGE+GENDER+SOCIOSTATUS_1.0+SOCIOSTATUS_2.0+SOCIOSTATUS_3.0",sep =""))
+    model.Y = lm(f2, data = data2)
+      if (summary(model.Y)$coef[,4][3] <=p_cutoff & summary(model.Y)$coef[,4][2] >= 0.03) {
+        results = mediate(model.M, model.Y, treat = col, mediator=mediator,boot =T,sims = 1000)
+        sink(paste(path,paste(col, mediator,outcome, sep ="_"), ".txt", sep =""))
+        print(summary(results))
+        print(summary(model.Y))
+        print(summary(model.M))
+        sink()
+      }
+    }
+  }
+}
+    
+#Helper function #2: Conducts Mediation Analysis without confounders
+ma_without_confounders <- function(data, outcome, mediator, p_cutoff) {
+  data2 <<- data
+  columns = colnames(data2)
+  columns = columns[!columns %in% c(outcome,mediator)]
+  
+  for (col in columns){
+    f1 <<- as.formula(paste(mediator,"~",col, sep =""))
+    model.M = lm(f1, data = data2)
+    if (summary(model.M)$coef[,4][2] <=p_cutoff){
+      f2 <<- as.formula(paste(outcome, "~", paste(mediator, col,sep= "+"),sep =""))
+      model.Y = lm(f2, data = data2)
+      results = mediate(model.M, model.Y, treat = col, mediator =mediator,boot =T,
+                      sims = 500)
+      if (results$d.avg.p <= p_cutoff){
+        f3 <<- as.formula(paste(outcome, "~", col, sep = ""))
+        model.YX = lm(f3, data = data2)
+        if (summary(model.YX)$coef[,4][2] <=p_cutoff){
+          sink(paste(path,paste(col, mediator,outcome, sep ="_"), ".txt", sep =""))
+          print(summary(results))
+          print(summary(model.M))
+          print(summary(model.Y))
+          print(summary(model.YX))
+          sink()
+          }
+        }
+    }
+  }
+}
+```
+
+# Association Rule Learning!
+
+Do Association Rules mining for the items within the passed dataframe. Write all the found 
+association rules that meet the specified conditions and save the produced graphs
+in the passed parameters to AssociationRules folder in the passed path.
+
+Args:
+    fname: .csv file containing the items of interest
+    min_support: Minimum value of support for the rule to be considered
+    min_confidence: Minimum value of confidence for the rule to be considered
+    min_items: Minimum number of item in the rules including both sides
+    max_items: Maximum number of item in the rules including both sides
+    disease: The item to be always on the rhs
+Returns:
+    A dataframe of all the association rules found
+      
+```{r, results='hide', warning= F, include = FALSE}
+library(arules)
+library(wordcloud)
+library(arulesViz)
+library(jpeg)
+library(tiff)
+library(igraph)
+library(dplyr)
+library(tidygraph)
+library(ggraph)
+library(stringr)
+
+
+association_rule_learning <- function(disease, fname, min_support, min_confidence, max_items) {
+  outcome <<- disease
+  path = paste(getwd(),"/ARL",sep="")
+  
+#Helper function to plot the gender-specific graphs nicely
+  plotting_gender_graph <- function(sex, gender_graph, sz_sex, width_sex, coords) {
+        tiff(filename = paste("graph_", sex, ".png", sep =""), width =9, height =8,
+           units = "in", res =300)
+        sz = sz_sex;
+        width = width_sex;
+        if(sex == "Female"){new_sz = case_when(sz > quantile(sz, 0.75) ~ "green", sz < quantile(sz, 0.25) ~ "red", TRUE ~ "yellow")} else{new_sz = case_when(sz > quantile(sz, 0.75) ~ "black", sz < quantile(sz, 0.25) ~ "purple", TRUE ~ "blue")}
+  
+        if (sex == "Female"){colors_vec = c("green", "yellow", "red")}else {colors_vec = c("black", "purple", "blue")}
+        
+  
+      
+      plot(gender_graph, layout = coords,
+           edge.width = exp(proportions(E(gender_graph)$weight)*30),
+           normalize = F,
+           edge.arrow.mode = 0, vertex.color = new_sz, vertex.size =proportions(lift_total$Count)*50,
+           vertex.label.cex = 1.2, vertex.label.font = 2, vertex.label.color= "black",
+           vertex.label.dist = case_when(
+             coords[,1] <0 ~-1.9,
+             coords[,2] == 0 & coords[,1]>0 ~ 2.85,
+             coords[,1] >0 ~ 1.7,
+             TRUE ~ 1.9),
+           vertex.label.degree = case_when(
+             coords[,2]<0 & coords[,1]<0  ~ -pi/4,
+             coords[,2] > 0 & coords[,1] > 0 ~ -pi/4,
+             coords[,2] == 0 & coords[,1] > 0 ~ -pi/4 +0.2,
+             #coords[,2] < 0 & coords[,1] < 0 ~ pi/4,
+             TRUE ~ pi/4 + 0.1)
+           , main = sex)
+      
+      dummy_leg = legend("topleft", legend = c(paste(">",round(quantile(sz, 0.75),2),sep =""),
+                              paste(round(quantile(sz, 0.25),2), " - ",
+                                    round(quantile(sz, 0.75),2),
+                                    sep =""),
+                              paste("<",round(quantile(sz, 0.25),2),sep ="")),
+             col = colors_vec, pch = c(19,19,19),cex =0.8,
+             title = "Average Lift", plot = F)
+      legend("topleft", legend = c(paste(">",round(quantile(sz, 0.75),2),sep =""),
+                              paste(round(quantile(sz, 0.25),2), " - ",
+                                    round(quantile(sz, 0.75),2),
+                                    sep =""),
+                              paste("<",round(quantile(sz, 0.25),2),sep ="")),
+             col = colors_vec, pch = c(19,19,19),cex =1.1,
+             title = "Average Lift")
+      dev.off()
+  }
+
+  #Association rule learning!
+  data = read.csv(fname)
+  data_F = subset(data, GENDER == 1)
+  data_M = subset(data, GENDER == 0)
+  data_F = dplyr::select(data_F, -GENDER)
+  data_M = dplyr::select(data_M, -GENDER)
+
+  graph_F = NULL
+  graph_M = NULL
+  
+  for (sex in c("Female", "Male")){
+    if (sex == "Female"){data_set = data_F}
+    else {data_set = data_M}
+    data_set <- data.frame(lapply(data_set,as.logical))
+    rhs_rule = paste(outcome, sep="")
+    rules <- apriori(data_set, parameter = list(supp=min_support, conf=min_confidence, maxlen=max_items,target ="rules"),appearance = list(default="lhs",rhs=rhs_rule), control=list(verbose = FALSE, load = T, memopt = F))
+    filtered_rules = arules::sort(filtered_rules, decreasing = TRUE, na.last = NA, 
+      by = c("confidence", "lift", "support"), order = FALSE)
+    
+    f_out =paste(path,"/arules_", outcome, "_", sex, ".csv", sep ="")
+    arules::write(filtered_rules, file = f_out, sep = ",")
+    
+    lhs = labels(lhs(filtered_rules))
+    rules.df = DATAFRAME(filtered_rules)
+    lift.vals = rules.df$lift
+    lhs = gsub('[{}]', '', lhs)
+    list.of.rules = strsplit(lhs, ",")
+    lhs = paste(lhs, collapse = ",")
+    lhs = unlist(strsplit(lhs, ","))
+    LHS = data.frame(lhs = lhs
+                     )
+    frequency_table = count(LHS, lhs)
+  
+    #Association graph!
+    top_12 = head(filtered_rules, n = 12, by ="lift")
+    jpeg(width = 1100, height= 600, res =100,
+         filename = paste(path,"/association_graph.jpeg"))
+    plot(top_12, method = "graph", control =list(type = "items"))
+    dev.off()
+    
+
+    feature_names = frequency_table$lhs
+    count_matrix = matrix(data = 0, nrow = length(feature_names),
+                          ncol = length(feature_names))
+
+    colnames(count_matrix) = feature_names
+    rownames(count_matrix) = feature_names
+   
+    lift_total = data.frame(Feature = feature_names,
+                            Total_lift = rep(0, length(feature_names)),
+                            Count = frequency_table$n)
+    for (i in 1:length(list.of.rules)){
+      temp.vec = list.of.rules[[i]]
+      if (length(temp.vec) != 1){
+        for (feature in temp.vec){
+          lift_total$Total_lift[which(lift_total$Feature ==feature)] = lift_total$Total_lift[which(lift_total$Feature ==feature)] + lift.vals[i]
+        }
+        for (j in 1:(length(temp.vec)-1)){
+          for (k in (j+1):length(temp.vec)){
+            count_matrix[temp.vec[j], temp.vec[k]] = 
+              count_matrix[temp.vec[j], temp.vec[k]] + 1
+          }
+        }
+      }
+    }
+  
+    lift_total = lift_total %>% mutate(Average_Lift = Total_lift/Count)
+    to.remove = (colSums(count_matrix) ==0 &
+                                    rowSums(count_matrix) ==0)
+    lift_total = lift_total %>%
+   filter(!row_number() %in% which(to.remove))
+    count_matrix = count_matrix[!(colSums(count_matrix) ==0 &
+                                    rowSums(count_matrix) ==0),
+                                !(colSums(count_matrix) ==0 &
+                                    rowSums(count_matrix) ==0)]
+    
+    colnames(count_matrix) = matrix_names
+    rownames(count_matrix) = matrix_names
+  
+    if (sex=="Female") { 
+      graph_F <<- igraph::graph_from_adjacency_matrix(count_matrix, mode = "undirected",
+                                        diag = F, weighted = T)
+      graph_F_names = V(graph_F)$name
+      sz_F <<- lift_total$Average_Lift
+      width_F <<- round(proportions(E(graph_F)$weight)*100,3)}
+    else {
+      graph_M <<- igraph::graph_from_adjacency_matrix(count_matrix, mode = "undirected",
+                                        diag = F, weighted = T)
+      graph_M_names = V(graph_M)$name
+      sz_M <<- lift_total$Average_Lift #color
+      width_M <<- round(proportions(E(graph_M)$weight)*100,3)}
+}
+    graph_U = igraph::union(graph_F,graph_M)
+    graph_U_names = V(graph_U)$name
+    coords <<- layout_(graph_U, as_star())
+
+    coords_M <<- coords[match(graph_M_names, graph_U_names),]
+    coords_M = na.omit(coords_M)
+    coords_F <<- coords[match(graph_F_names, graph_U_names),]
+    coords_F = na.omit(coords_F)
+
+    #PLOTTING
+    plotting_gender_graph("Female", graph_F, sz_F, width_F, coords_F)
+    plotting_gender_graph("Male", graph_M, sz_M, width_M, coords_M)  
+    
+}
+```
+
+# ANOVA/Kruskal-Wallis Test
+```
+Conduct an ANOVA analysis -- either one or two way -- between the dependent and independent variables
+passed. If there is signifcant effect found, conduct a follow up test. The function checks for the ANOVA
+assumptions and provide alternative tests such as Kruskal-Wallis H. Results will be stored at an ANOVA subfolder.
+
+Args:
+    f_name: CSV file containing the items of interest
+    dep: the dependent varaible in the analysis
+    indep: column names -- a string (oneWayANOVA) or a list of two strings (twoWayANOVA)
+    alpha: minimum value for the p-value for the effect to be signifcant
+        conduct repeated measures ANOVA -- to be implemented.
+
+Returns:
+    a .txt files and .png images mapping each test conducted to its results
+```
+
+```{r, warning = F}
+library(foreign)
+library(ggplot2)
+library(BSDA)
+library(tidyverse)
+library(gridExtra)
+library(rcompanion)
+library(car)
+library(emmeans)
+library(FSA)
+
+#One-Way ANOVA
+oneWayANOVA <- function(f_name, indep, dep, alpha) {
+  setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+  path = paste(getwd(),'/ANOVA/OneWayANOVA/',indep,'/',sep="")
+  if (!dir.exists(path)) {
+    dir.create(path)
+  }
+
+  data = read.csv(f_name,header = T)
+  data = data[c(dep,indep)]
+  data[, names(data)%in%c(indep)] = as.factor(data[, names(data)%in%c(indep)])
+  y <- as.formula(paste(dep,'~',indep))
+  subset_anova = aov(y, data = data)
+  
+  #Create a box plot for outliers detection
+  png(paste(path,indep,"oneWayANOVA_boxPlot.png",sep=""))
+  boxplot(y, data = data)
+  dev.off()
+  
+  #Histogram and QQ plot for normality
+  png(paste(path,indep,"oneWayANOVA_histogram.png",sep=""))
+  hist(subset_anova$residuals)
+  dev.off()
+  
+  png(paste(path,indep,"oneWayANOVA_QQplot.png",sep=""))
+  qqnorm(subset_anova$residuals, main="")
+  qqline(subset_anova$residuals)
+  dev.off()
+  
+      
+  #Create bar plots to visualize average mood score
+  #sink(file =  paste(path,"/oneWay",f_name, ".txt", sep =""))
+  pdf(file = paste(path,indep,"oneWayANOVA_barPlot.pdf", sep =""), onefile = T)
+    summary = summarize(group_by(data, data[c(indep)]), Average = mean(!!sym(dep)), SE = (sd(!!sym(dep))/sqrt(length(!!sym(dep)))))
+    plot_1 <- ggplot(summary, aes(x=get(indep),y=Average))+
+      geom_col() + geom_bar(stat = "identity", color = 'black')+
+      geom_errorbar(aes(ymin = Average - SE, ymax = Average +SE), width=0.2)+labs(y=paste("Average ",dep," Score"), x = indep)+theme(axis.text=element_text(size=17), axis.title = element_text(size = 18),
+      legend.title = element_text(size= 18), legend.text = element_text(size =17))+
+        scale_fill_manual(values=c("#FFFFFF", "#808080"))
+    print(plot_1)
+  dev.off()
+
+
+  sink(file =  paste(path,"/oneWay",indep, "_summary.txt", sep =""))
+      #Conducting ANOVA test
+      cat(paste('Results for one way ANOVA between ',indep,' and ',dep,' are: ',sep=""))
+      summary.anova = anova(subset_anova)
+      print(summary.anova)
+      cat('------------------------------------------------------------------------------\n\n')
+      
+      #Shapiro-Wilk test for normality
+      cat('Results for Shapiro-Wilk test to check for normality are: ')
+      print(shapiro.test(subset_anova$residuals))
+      cat('------------------------------------------------------------------------------\n\n')
+     
+      #Follow-up Turkey Test if the result is significant
+      if (summary.anova[1,5]<=alpha) {
+        cat(paste('Results for follow-up Tukey test between ',indep,' and ',dep,' are: ',sep=""))
+        print(TukeyHSD(subset_anova))
+        cat('------------------------------------------------------------------------------\n\n')
+      }
+      
+      #Check for equality of variances
+      cat("Results for Levene's and Barlett test to check for equality of variance are: ")
+      print(leveneTest(y, data = data))
+      cat('------------------------------------------------------------------------------\n\n')
+      
+      #Kruskal-Wallis H test
+      cat('Results for Kruskal-Wallis Test -- to be used if ANOVA assumptions are violated: ')
+      summary.kw = kruskal.test(y, data=data)
+      print(summary.kw)
+      cat('------------------------------------------------------------------------------\n\n')
+      
+      #The Dunn's test-follow up is p-value is significant
+      if (summary.kw$p.value <= alpha) {  #BUG when there are only 2 groups
+        cat(paste("Results for follow-up Dunn's test between ", indep," and ",dep," are: \n\n",sep=""))
+        dunnTest(y, data=data, method="bh")
+      }
+  sink()
+}
+
+#Two-Way ANOVA
+twoWayANOVA <- function(f_name, indep, dep, alpha) {
+  setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+  path = paste(getwd(),'/ANOVA/TwoWayANOVA/',indep[[1]],'/',sep="")
+  if (!dir.exists(path)) {
+    dir.create(path)
+  }
+
+  data = read.csv(f_name,header = T)
+  data = na.omit(data)
+  data = data[c(dep,indep[[1]],indep[[2]])]
+  data[,names(data)%in%c(indep[[1]])] = as.factor(data[,names(data)%in%c(indep[[1]])])
+  data[,names(data)%in%c(indep[[2]])] = as.factor(data[,names(data)%in%c(indep[[2]])])
+  options(contrasts = c(unordered="contr.sum", ordered="contr.poly"))
+  
+  y <- as.formula(paste(dep,'~',indep[[1]],'*',indep[[2]],sep=""))
+  subset_anova = aov(y, data = data)
+  
+  #Create bar plots to visualize average mood score
+  summary_gendered = summarize(group_by(data, data[c(indep[[1]])], data[c(indep[[2]])]),
+                                 Average = mean(!!sym(dep)), SE = (sd(!!sym(dep))/sqrt(length(!!sym(dep)))))
+  pdf(file = paste(path,indep,"twoWayANOVA_barPlot.pdf", sep =""), onefile = T)
+    plot_2 = ggplot(summary_gendered, aes(x=get(indep[[1]]), y=Average, fill = get(indep[[2]]))) +geom_bar(stat = "identity", color = 'black',width=0.85, position=position_dodge(0.95))+
+     geom_errorbar(aes(ymin = Average - SE, ymax = Average +SE), width=0.2, position = position_dodge(0.95)) +labs(y=paste("Average ",dep," Score",sep=""),x = indep[[1]], fill = indep[[2]]) + theme_classic()+
+     scale_fill_manual(values=c("#FFFFFF", "#808080")) +
+      theme(
+      axis.text=element_text(size=17), axis.title = element_text(size = 18),
+      legend.title = element_text(size= 18), legend.text = element_text(size =17))
+    print(plot_2)
+  dev.off()
+  
+  
+  #Create a box plot for outliers detection
+  png(paste(path,indep,"twoWayANOVA_boxPlot.png",sep=""))
+  boxplot(y, data = data)
+  dev.off()
+  
+  #Histogram for normality
+  png(paste(path,indep,"twoWayANOVA_histogram.png",sep=""))
+  hist(subset_anova$residuals, freq=FALSE)
+  curve(dnorm(x,mean(subset_anova$residuals), sd(subset_anova$residuals)),-7, 7, add=TRUE,col="red")
+  dev.off()
+  
+  #QQ Plot for Normality
+  png(paste(path,indep,"twoWayANOVA_QQplot.png",sep=""))
+  qqnorm(subset_anova$residuals, main="")
+  qqline(subset_anova$residuals)
+  dev.off()
+  
+  sink(file=paste(path,"/twoWay",indep[[1]],'_',indep[[2]], "_summary.txt", sep =""))
+      #Conducting ANOVA test
+      cat(paste('Results for one way ANOVA between ',indep[[1]],'&',indep[[2]],' and ',dep,' are: ',sep=""))
+      summary.anova = Anova(subset_anova, type="III") 
+      print(summary.anova)
+      cat('------------------------------------------------------------------------------\n\n')
+      
+      #Shapiro-Wilk test for normality
+      cat('Results for Shapiro-Wilk test to check for normality are: ')
+      print(shapiro.test(subset_anova$residuals))
+      cat('------------------------------------------------------------------------------\n\n')
+     
+      #Follow-up Turkey Test
+      cat(paste('Results for follow-up Tukey test between ',indep[[1]],'&',indep[[2]],' and ',dep,' are: ',sep=""))
+      print(TukeyHSD(subset_anova))
+      cat('------------------------------------------------------------------------------\n\n')
+
+      #Check for equality of variances
+      cat("Results for Barlett test to check for equality of variance are: ")
+      print(leveneTest(y, data = data))
+      cat('------------------------------------------------------------------------------\n\n')
+  sink()
+  
+  #Create interaction plot if there is interaction between 2 factors
+  if (summary.anova[4,4] <= alpha) {
+    pdf(paste(path,indep,'twoWayANOVA_InteractionPlot.pdf',sep=""))
+    interaction.plot(data[,indep[[1]]], data[,indep[[2]]], data[,dep],type="b", ylab = dep, xlab = indep[[1]])
+    interaction.plot(data[,indep[[2]]], data[,indep[[1]]], data[,dep],type="b", ylab = dep, xlab = indep[[2]])
+    dev.off()
+  }
+}
+
+
+f_name = "ANOVAfull.csv"
+indeps <- list('CLOCK3111_TCZBTB20_AB')
+
+dep = "SPAQ"
+alpha = 0.05
+
+for (indep in indeps) {
+  oneWayANOVA(f_name, indep, dep, alpha)
+}
+
+for (indep in indeps) {
+  vars <- list(indep, "GENDER")
+  twoWayANOVA(f_name, vars, dep, alpha)
+}
+```
+
+# ARACNE
+```
+ARACNE (Algorithm for the Reconstruction of Gene Regulatory Networks) is a novel algorithm that constructs a gene network using mutual information (https://bmcbioinformatics.biomedcentral.com/articles/10.1186/1471-2105-7-S1-S7).
+The network generated will indicate the direct and indirect effects. We use ARACNE and perform boostrapping to determine the confidence level with which each link in the network appears.
+
+Args:
+    f_name: CSV file containing the items of interest
+    dep: the dependent varaible in the analysis
+    indep: name of the mediator.
+    alpha: minimum value for the frequency for the link to exist in the network.
+    method: name of method to be implemented in building the mutual information network
+Returns:
+    .jpeg images mapping each test conducted to its results
+```
+
+```{r, warnings =F}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("minet")
+BiocManager::install("Rgraphviz")
+library(minet)
+library(Rgraphviz)
+library(foreign)
+library(officer)
+library(ggplot2)
+library(dplyr)
+library(igraph)
+
+ARACNE <- function(f_name, dep, indep, alpha, method) {
+  setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+  path = paste(getwd(), '/ARACNE/',sep="")
+  if (!dir.exists(path)) {
+    dir.create(path)
+  }
+
+  data = read.csv(f_name)
+  data = data.frame(data)
+  set.seed(1)
+  #c("mi.mm", "mi.sg", "mi.empirical", "mi.shrink","pearson", "spearman", "kendall") #Choose method to be implemented
+  for (m in c(method)) {
+  mat = matrix(0, ncol(data), ncol(data))
+  colnames(mat) = colnames(data)
+  rownames(mat) = colnames(data)
+  for (k in 1:100){
+    data_subset = data[sample(1:nrow(data), size = nrow(data), replace = T),]
+    mim <- build.mim(data_subset,disc = "equalfreq",estimator=m)
+    net <- aracne(mim)
+    for (i in 1:(ncol(data))){
+      for (j in 1:(ncol(data))){
+        if (net[i,j] >0){mat[i,j] = mat[i,j]+1}
+      }
+    }
+  }
+
+  mat[mat <= alpha] = 0
+  g1 = as(mat ,"graphNEL")
+  
+  ew <- as.character(unlist(edgeWeights(g1)))
+  ew <- ew[setdiff(seq(along=ew), removedEdges(g1))]
+  names(ew) <- edgeNames(g1)
+  eAttrs = list()
+  attrs <- list(node=list(shape="ellipse", fixedsize=FALSE))
+  eAttrs$label <- ew
+  attrs$edge$fontsize <- 18
+  jpeg(file= paste(path, method, indep, '_',dep,'_boot_.jpeg', sep =""), res =300, width = 5, height = 4, units ="in")
+  #plot(main = method, g1, edgeAttrs=eAttrs, attrs=attrs, groups = list(c("AGE", "GENDER", "SOCIOSTATUS"), c("PER2", "PER3A", "PER3B","PER3C"), c("CLOCK3111","VNTR","CRY1", "CRY2")))
+  dev.off()
+ }
+}
+
+```
+
+# Create Bar Graphs
+```{r}
+library(foreign)
+library(ggplot2)
+library(BSDA)
+library(tidyverse)
+library(gridExtra)
+library(rcompanion)
+library(car)
+library(mosaic)
+library(emmeans)
+
+create_bargraph <- function(f_name, gene1, gene2, SNP1,SNP2, Mood) {
+  setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+  data = read.csv(f_name)
+  
+  f_name = paste(gene1,"_",SNP1,gene2,"_",SNP2,sep="")
+  path = paste(getwd(),"/ANOVA/TwoWayANOVA/",f_name, sep ="")
+  if (!dir.exists(path)) {
+    dir.create(path)
+  }
+  
+  summary = summarize(group_by(data, !!sym(gene1),!!sym(gene2)),
+                        Average = mean(!!sym(Mood)), SE = (sd(!!sym(Mood))/sqrt(length(!!sym(Mood)))))
+    plot_3 = ggplot(summary, aes(!!sym(gene1), Average, fill = !!sym(gene2))) +
+    geom_col(position = position_dodge(0.95)) + geom_bar(stat = "identity", color = 'black',width=0.9, position=position_dodge(0.95))+
+    geom_errorbar(aes(ymin = Average - SE, ymax = Average +SE), width=0.2, position = position_dodge(0.95)) +labs(y=paste("Average ",Mood," Score",sep=""), x = gene1) +theme(
+        axis.text=element_text(size=17), axis.title = element_text(size = 18),
+        legend.title = element_text(size= 18), legend.text = element_text(size =17),
+        strip.text.x = element_text(size = 18)) +
+      scale_fill_manual(values=c("#FFFFFF", "#808080", '#D3D3D3'))+coord_cartesian(ylim= c(0,20)) 
+  #print(plot_3)
+  
+  
+  summary_gendered_gene = summarize(group_by(data, !!sym(gene1),!!sym(gene2), GENDER), Average = mean(!!sym(Mood)), SE = (sd(!!sym(Mood))/sqrt(length(!!sym(Mood)))))
+  
+  
+  plot_4 = ggplot(summary_gendered_gene, aes(!!sym(gene1), Average, fill = !!sym(gene2)))+geom_bar(stat = "identity", color = 'black', width=0.7, position=position_dodge(width = 0.9, preserve = "single"))+
+    geom_errorbar(aes(ymin = Average - SE, ymax = Average +SE), width=0.2, position = position_dodge(width = 0.9, preserve = 'single')) +labs(y=paste("Average ",Mood," Score",sep=""), x = gene1) + theme_classic() +
+      scale_y_continuous(expand = c(0,0), limits = c(0, 20))+
+      scale_fill_manual(values=c("#FFFFFF", '#D3D3D3',"#808080"))+ facet_wrap(~ GENDER)+theme(
+        axis.text=element_text(size=17), axis.title = element_text(size = 18),
+        legend.title = element_text(size= 18), legend.text = element_text(size =17),
+        strip.text.x = element_text(size = 18))+
+      geom_hline(yintercept = 0)
+  
+  #print(plot_4)
+  
+    pdf(file = paste(path,"/twoWayANOVA_BarPlots.pdf", sep =""), onefile = T)
+    print(plot_3)
+    print(plot_4)
+    dev.off()
+}
+create_bargraph("PER3A", "CRY1", "CC", "GG", "SPAQ")
+create_bargraph("PER2", "CRY1", "AA", "GG", "SPAQ")
+create_bargraph("PER2", "PER3C", "AA", "TT", "SPAQ")
+create_bargraph("VNTR", "CRY1", "55", "GG", "SPAQ")
+create_bargraph("VNTR", "PER3A", "45", "CC", "SPAQ")
+create_bargraph("CRY2", "PER3B", "AG", "AG", "SPAQ")
+create_bargraph("CRY2", "PER3C", "AA", "TG", "SPAQ")
+# create_bargraph("CRY2", "PER3A", "AA", "CC", "SPAQ")
+# create_bargraph("VNTR", "CRY1", "44", "GG", "SPAQ")
+```
