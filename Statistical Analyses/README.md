@@ -1,6 +1,6 @@
 # Code Functionality
 This code was originally worked on by Taz Saad and Aziz Zafar, and then cleaned, compiled, and edited to more modular by Thanh Dang. 
-Below are some functions that perform different statistical tests, including: Linear Regression, Logistic Regression, Mediation Analysis, Association Rule Learning, and ANOVA. Contact @thdang@colgate.edu for any queries or follow-up questions.
+Below are some functions that perform different statistical tests, including: Linear Regression, Logistic Regression, Mediation Analysis, Association Rule Learning, and ANOVA. Contact thdang@colgate.edu for any queries or follow-up questions.
 
 The code has 8 separate chunks to perform different statistical analysis. Navigate yourself to the specific methods desired and follow the function description. 
 
