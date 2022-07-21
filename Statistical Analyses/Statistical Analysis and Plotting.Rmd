@@ -19,9 +19,8 @@ univariate_lr <- function(filename, dep, indep) {
   if (!dir.exists(f_path)) {
     dir.create(f_path)
   }
-  f = filename
   
-  data <- read.csv(file =f)
+  data <- read.csv(file =filename)
   data = data[,names(data) %in% c(indep, dep)]
   
   y <- as.formula(paste(dep,' ~ ', indep))
@@ -38,15 +37,6 @@ univariate_lr <- function(filename, dep, indep) {
   df <- df[order(df$P_Value),]
   write.csv(df,file = paste(f_path,'/Logit',indep,'.csv',sep="")) #Change file name if needed
 }
-
-filename = 'BDI_F_SMOTE.csv'
-dep = 'BDI_F'
-features = read.csv("RobustFeatures.csv")$feature
-for (indep in features) {
-  univariate_lr(filename,dep,indep)
-}
-
-
 ```
 
 # Multivariate Logistic Regression
@@ -155,12 +145,6 @@ bicaictop <- function(y, data, IC){
   df <- df %>% add_column(Adjusted_P = adjusted2)
   df <- df %>% arrange(P_Value)
   df
-}
-
-dep="BDI_F"
-f_names = c("BDI_F_SMOTE_top10.csv","BDI_F_SMOTE_top20.csv")
-for (f_name in f_names) {
-  multivariate_logistic_regression(f_name, dep, TRUE, "AIC")
 }
 ```
 
@@ -445,21 +429,26 @@ association_rule_learning <- function(disease, fname, min_support, min_confidenc
              TRUE ~ pi/4 + 0.1)
            , main = sex)
       
-      dummy_leg = legend("topleft", legend = c(paste(">",round(quantile(sz, 0.75),2),sep =""),
-                              paste(round(quantile(sz, 0.25),2), " - ",
-                                    round(quantile(sz, 0.75),2),
-                                    sep =""),
-                              paste("<",round(quantile(sz, 0.25),2),sep ="")),
-             col = colors_vec, pch = c(19,19,19),cex =0.8,
-             title = "Average Lift", plot = F)
-      legend("topleft", legend = c(paste(">",round(quantile(sz, 0.75),2),sep =""),
-                              paste(round(quantile(sz, 0.25),2), " - ",
-                                    round(quantile(sz, 0.75),2),
-                                    sep =""),
-                              paste("<",round(quantile(sz, 0.25),2),sep ="")),
-             col = colors_vec, pch = c(19,19,19),cex =1.1,
-             title = "Average Lift")
-      dev.off()
+      dummy_leg = legend("bottomleft", legend = c(paste(">",round(quantile(sz, 0.75),2),sep =""),
+                            paste(round(quantile(sz, 0.25),2), " - ",
+                                  round(quantile(sz, 0.75),2),
+                                  sep =""),
+                            paste("<",round(quantile(sz, 0.25),2),sep ="")),
+           col = colors_vec, pch = c(19,19,19),cex =0.8,
+           title = "Average Lift", plot = F)
+    legend(x = dummy_leg$rect$left- 0.3, y= dummy_leg$rect$top-0.355,
+           legend = c("Average Lift: ",paste(">",round(quantile(sz, 0.75),2),
+                                             " |", sep =""),
+                            paste(round(quantile(sz, 0.25),2), " - ",
+                                  round(quantile(sz, 0.75),2), " |",
+                                  sep =""),
+                            paste("<",round(quantile(sz, 0.25),2),
+                                  sep ="")),
+          col = colors_vec,
+           pch = c(26, 19,19,19), cex =1.8,
+           # title = "Average Lift",
+           horiz =T, xpd = T, x.intersp = 0.5, bty = "n",
+           text.width = c(0, 0.56, 0.425, 0.465))
   }
 
   #Association rule learning!
@@ -759,22 +748,6 @@ twoWayANOVA <- function(f_name, indep, dep, alpha) {
     dev.off()
   }
 }
-
-
-f_name = "ANOVAfull.csv"
-indeps <- list('CLOCK3111_TCZBTB20_AB')
-
-dep = "SPAQ"
-alpha = 0.05
-
-for (indep in indeps) {
-  oneWayANOVA(f_name, indep, dep, alpha)
-}
-
-for (indep in indeps) {
-  vars <- list(indep, "GENDER")
-  twoWayANOVA(f_name, vars, dep, alpha)
-}
 ```
 
 # ARACNE
@@ -904,13 +877,4 @@ create_bargraph <- function(f_name, gene1, gene2, SNP1,SNP2, Mood) {
     print(plot_4)
     dev.off()
 }
-create_bargraph("PER3A", "CRY1", "CC", "GG", "SPAQ")
-create_bargraph("PER2", "CRY1", "AA", "GG", "SPAQ")
-create_bargraph("PER2", "PER3C", "AA", "TT", "SPAQ")
-create_bargraph("VNTR", "CRY1", "55", "GG", "SPAQ")
-create_bargraph("VNTR", "PER3A", "45", "CC", "SPAQ")
-create_bargraph("CRY2", "PER3B", "AG", "AG", "SPAQ")
-create_bargraph("CRY2", "PER3C", "AA", "TG", "SPAQ")
-# create_bargraph("CRY2", "PER3A", "AA", "CC", "SPAQ")
-# create_bargraph("VNTR", "CRY1", "44", "GG", "SPAQ")
 ```
