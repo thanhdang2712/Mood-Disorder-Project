@@ -82,6 +82,8 @@ To run on Cluster, cd into the folder and run 'python3 main.py'. Alternatively, 
 3. Type qsub pbsfilename to submit the job and make it run to the cluster.
 4. To check the currently running jobs, we can type qstat -a to see if your job is currently running.
 
+# Acknowledgements
+I would like to thank Tazmilur Saad, Ziad Attia, and Aziz Zafar for there contributions to and previous work on this codebase.
 
 # Contact
 Thanh Dang: thdang@colgate.edu
