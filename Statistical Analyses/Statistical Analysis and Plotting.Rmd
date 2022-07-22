@@ -407,7 +407,7 @@ association_rule_learning <- function(disease, fname, min_support, min_confidenc
         width = width_sex;
         if(sex == "Female"){new_sz = case_when(sz > quantile(sz, 0.75) ~ "green", sz < quantile(sz, 0.25) ~ "red", TRUE ~ "yellow")} else{new_sz = case_when(sz > quantile(sz, 0.75) ~ "black", sz < quantile(sz, 0.25) ~ "purple", TRUE ~ "blue")}
   
-        if (sex == "Female"){colors_vec = c("green", "yellow", "red")}else {colors_vec = c("black", "purple", "blue")}
+        if (sex == "Female"){colors_vec = c("white","green", "yellow", "red")}else {colors_vec = c("white","black", "purple", "blue")}
         
   
       
